@@ -1,0 +1,35 @@
+family,common_name,taxon_code,genus,species,taxon,taxon_short,origin,trophic_group
+Salmonidae,Brook Trout,BKT,Salvelinus,fontinalis,Salvelinus fontinalis,S. fontinalis,NonNative,invertivore
+Cyprinidae,Brassy Minnow,BMN,Hybognathus,hankinsoni,Hybognathus hankinsoni,H. hankinsoni,Native,omnivore
+Cyprinidae,Bigmouth Shiner,BMS,Notropis,dorsalis,Notropis dorsalis,N. dorsalis,Native,invertivore
+Salmonidae,Brown Trout,BNT,Salmo,trutta,Salmo trutta,S. trutta,NonNative,piscivore
+Ictaluridae,Channel Catfish,CCF,Ictalurus,punctatus,Ictalurus punctatus,I. punctatus,Native,piscivore
+Cyprinidae,Creek Chub,CKC,Semolitus,atromaculatus,Semolitus atromaculatus,S. atromaculatus,Native,invertivore
+Cyprinidae,Common Carp,CRP,Cyprinus,carpio,Cyprinus carpio,C. carpio,NonNative,omnivore
+Cyprinidae,Common Shiner,CSH,Luxilus,cornutus,Luxilus cornutus,L. cornutus,Native,omnivore
+Cyprinidae,Fathead Minnow,FHM,Pimephales,promelas,Pimephales promelas,P. promelas,Native,omnivore
+Sciaenidae,Freshwater Drum,FWD,Aplodinotus,grunniens,Aplodinotus grunniens,A. grunniens,NonNative,piscivore
+Centrarchidae,Green Sunfish,GSF,Lepomis,cyanellus,Lepomis cyanellus,L. cyanellus,NonNative,invertivore
+Clupeidae,Gizzard Shad,GZD,Dorosoma,cepedianum,Dorosoma cepedianum,D. cepedianum,NonNative,invertivore
+Cyprinidae,Hornyhead Chub,HHC,Nocomis,biguttatus,Nocomis biguttatus,N. biguttatus,Native,invertivore
+Percidae,Iowa Darter,IOD,Etheostoma,exile,Etheostoma exile,E. exile,Native,invertivore
+Percidae,Johnny Darter,JDT,Etheostoma,nigrum,Etheostoma nigrum,E. nigrum,Native,invertivore
+Centrarchidae,Largemouth Bass,LMB,Micropterus,salmoides,Micropterus salmoides,M. salmoides,NonNative,piscivore
+Cyprinidae,Longnose Dace,LND,Rhinichthyes,cataractae,Rhinichthyes cataractae,R. cataractae,Native,invertivore
+Catostomidae,Longnose Sucker,LNS,Catostomus,catostomus,Catostomus catostomus,C. catostomus,Native,omnivore
+Fundulidae,Plains Killifish,PKF,Fundulus,zebrinus,Fundulus zebrinus,F. zebrinus,Native,invertivore
+Salmonidae,Rainbow Trout,RBT,Oncorhynchus,mykiss,Oncorhynchus mykiss,O. mykiss,NonNative,piscivore
+Catostomidae,Shorthead Redhorse,RDH,Moxostoma,macrolepidotum,Moxostoma macrolepidotum,M. macrolepidotum,Native,invertivore
+Cyprinidae,Red Shiner,RSH,Cyprinella,lutrensis,Cyprinella lutrensis,C. lutrensis,Native,invertivore
+Cyprinidae,Sand Shiner,SDS,Notropis,stramineus,Notropis stramineus,N. stramineus,Native,omnivore
+Centrarchidae,Smallmouth Bass,SMB,Micropterus,dolomieu,Micropterus dolomieu,M. dolomieu,NonNative,piscivore
+Cyprinidae,Suckermouth Minnow,SMM,Phenacobius,mirabilis,Phenacobius mirabilis,P. mirabilis,Native,invertivore
+Ictaluridae,Stonecat,STC,Noturus,flavus,Noturus flavus,N. flavus,Native,invertivore
+Gasterosteridae,Brook Stickleback,STK,Culaea,inconstans,Culaea inconstans,C. inconstans,NonNative,omnivore
+Cyprinidae,Central Stoneroller,STR,Campostoma,anomalum,Campostoma anomalum,C. anomalum,Native,herbivore
+Salmonidae,yoy Trout,Trout,Unknown,Unknown,Unknown Unknown,yoyTrout,NonNative,invertivore
+Percidae,Walleye,WAE,Sander,vitreus,Sander vitreus,S. vitreus,NonNative,piscivore
+Catostomidae,White Sucker,WHS,Catostomus,commersonni,Catostomus commersonni,C. commersonii,Native,omnivore
+Percidae,Yellow Perch,YEP,Perca,flavescens,Perca flavescens,P. flavescens,NonNative,invertivore
+Gadidae,Burbot,BBT,Lota,lota,Lota lota,L. lota,NA,NA
+Cyprinidae,Utah Chub,UTC,Gila,atraria,Gila atraria,G. atraria,NA,NA

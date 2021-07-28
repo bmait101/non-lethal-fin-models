@@ -1,0 +1,1567 @@
+---
+title: "Maitland et al. Non-lethal modeling"
+author: "Bryan M. Maitland"
+date: "14 May 2020"
+output:
+  html_document: default
+editor_options:
+  chunk_output_type: console
+---
+
+```{r Set Up}
+# Load libriaries
+library(tidyverse)  # for data import, wrangling, and plotting
+library(broom)  # for tidy model objects
+library(ggpubr)  # for plotting fxs
+library(rstatix)   # pipe friendly stats
+
+# Load custom functions 
+source("code/fx_theme_pub.R", chdir = TRUE)
+source("code/fx_cleave-by.R", chdir = TRUE)
+```
+
+# 1. Data preprocessing
+```{r Data Import and Checking}
+
+data_all <- read_csv("data/data_iso_fish_fins-compiled.csv") 
+data_fish_groups <- read_csv("data/metadata_fishes.csv")
+
+(df1 <- 
+  data_all %>% 
+  filter(!taxon_code %in% c("BNT","WAE","STC")) %>%
+  droplevels() %>%   
+  mutate_if(is.character, as.factor) %>% 
+  left_join(data_fish_groups, by = "taxon_code") %>% 
+  select(unique_id, site_id, taxon_code, common_name, length_mm, d15N, d13C, CN, d15N_fin, d13C_fin, CN_fin) 
+)
+```
+
+```{r sample sizes}
+# Sample size of dataset
+df1 %>% group_by(common_name) %>% tally() %$% sum(n)
+
+# Sample sizes per species
+df1 %>% group_by(common_name) %>% tally() %>% arrange(desc(n)) 
+
+```
+
+## Lipid corrections
+```{r Check C:N ratios across species}
+(df1 %>% 
+  group_by(common_name) %>% 
+  summarise(mean_CN = mean(CN), 
+            sd_CN = sd(CN), 
+            mean_CN_fin = mean(CN_fin), 
+            sd_CN_fin = sd(CN_fin))
+)
+```
+Most species have relatively low C:N ratios (<4).
+
+```{r Apply lipid correction}
+(df1 <- df1 %>% 
+  mutate(d13C_lc = if_else(CN > 4.0, 
+                               d13C - 3.32 + (0.99 * CN), 
+                               d13C),
+         d13C_fin_lc = if_else(CN_fin > 4.0, 
+                               d13C_fin - 3.32 + (0.99 * CN_fin), 
+                               d13C_fin))
+)
+```
+
+## Make long df
+```{r Make Long Data}
+
+# First, select out the muscle data
+a <- 
+  df1 %>% 
+  select(taxon_code, 
+        length_mm, 
+        d13C, d13C_lc, d15N) %>% 
+    mutate(sample_type = "muscle")
+
+# Then select out the fin data
+b <- 
+  df1 %>% 
+  select(taxon_code, 
+        length_mm, 
+        d13C_fin, d13C_fin_lc, d15N_fin) %>% 
+  mutate(sample_type = "fin") %>% 
+  # Rename columns to match df a above
+  rename(d13C = d13C_fin, d13C_lc = d13C_fin_lc, d15N = d15N_fin)
+
+# Now Stack'em
+data_long <- 
+  a %>% 
+  bind_rows(b) %>%
+  left_join(data_fish_groups, by = "taxon_code")
+data_long
+```
+
+
+# 2. Data Exploration
+
+## Data summary
+```{r Summary table}
+data_summary <- df1 %>% 
+  # Calculate descriptive statistics
+  mutate(oset_C = d13C_fin_lc - d13C_lc, 
+         oset_N = d15N_fin - d15N) %>% 
+  group_by(taxon_code) %>% 
+  summarise(N = n(),
+            length_m = mean(length_mm), 
+            length_sd = sd(length_mm), 
+            cn_fin_m = mean(CN_fin), 
+            cn_fin_sd = sd(CN_fin), 
+            cn_mus_m = mean(CN), 
+            cn_mus_sd = sd(CN),
+            oset_C_m = mean(oset_C), 
+            oset_C_sd = sd(oset_C), 
+            oset_N_m = mean(oset_N), 
+            oset_N_sd = sd(oset_N)
+            ) %>% 
+  # Tidy and wrtie to file
+  mutate_if(is.numeric, round, 2) %>% 
+  mutate(length_m = round(length_m, 0), 
+         length_sd = round(length_sd, 0)) %>% 
+  mutate(Length_m = paste0(length_m, " (", length_sd, ")"), 
+         CN_fin = paste0(cn_fin_m, " (", cn_fin_sd, ")"), 
+         CN_mus = paste0(cn_mus_m, " (", cn_mus_sd, ")"),
+         Offset_C = paste0(oset_C_m, " (", oset_C_sd, ")"),
+         Offset_N = paste0(oset_N_m, " (", oset_N_sd, ")"),
+         ) %>% 
+  left_join(data_fish_groups, by = "taxon_code") %>% 
+  select(family, taxon, common_name, N, Length_m, CN_fin, CN_mus, Offset_C, Offset_N) %>% 
+  arrange(family, common_name) %>% 
+  rename(Family = family, Species=taxon, Common=common_name) %>% 
+  write_csv("tables/data_summary.csv")
+data_summary
+```
+
+## Offsets summary
+```{r Isotope offsets}
+df1 %>% 
+  summarise(n = n(), 
+            Cfin_mean = mean(d13C_fin), 
+            Cfin_sd = sd(d13C_fin), 
+            C_mean = mean(d13C), 
+            C_sd = sd(d13C),             
+            Nfin_mean = mean(d15N_fin), 
+            Nfin_sd = sd(d15N_fin), 
+            N_mean = mean(d15N), 
+            N_sd = sd(d15N)            
+            )
+
+
+df1 %>% 
+  mutate(oset_C = d13C_fin_lc - d13C_lc, 
+         oset_N = d15N_fin - d15N) %>% 
+  #group_by(taxon_code) %>% 
+  summarise(n = n(), 
+            oset_C_mean = mean(oset_C), 
+            oset_C_sd = sd(oset_C), 
+            oset_N_mean = mean(oset_N), 
+            oset_N_sd = sd(oset_N)) 
+
+```
+
+```{r C:N ratio offsets}
+
+df1 %>% 
+  mutate(oset_CN = CN_fin - CN) %>% 
+  group_by(taxon_code) %>% 
+  summarise(n = n(), 
+            oset_CN_mean = mean(oset_CN), 
+            oset_CN_sd = sd(oset_CN)) %>% 
+  summarise(mean_CN_oset = mean(oset_CN_mean), 
+            sd_CN_offset = sd(oset_CN_mean))
+
+df1 %>% 
+  mutate(oset_CN = CN_fin - CN) %>% 
+  group_by(taxon_code) %>% 
+  summarise(n = n(), 
+            oset_CN_mean = mean(oset_CN), 
+            oset_CN_sd = sd(oset_CN))
+
+```
+
+## Boxplots
+```{r fig - Boxplots and outliers}
+
+(outliers.p <- 
+  ggpubr::ggarrange(
+
+    # Carbon
+    data_long %>% 
+      ggplot(aes(x = sample_type, y = d13C_lc)) + 
+      geom_boxplot(outlier.shape = 21) +
+      scale_y_continuous(limits = c(-34,-22), breaks = seq(-34, -22, 2)) + 
+      theme_Publication() + 
+      labs(x = "Tissue type",
+           y = expression(~{delta}^13*C['lipid corrected']~'(\u2030)'), 
+           title = "(A) Carbon values"),
+
+    # Nitrogen
+    data_long %>% 
+      ggplot(aes(x = sample_type, y = d15N)) + 
+      geom_boxplot(outlier.shape = 21) +
+      scale_y_continuous(limits = c(6, 16)) + 
+      theme_Publication() + 
+      labs(x = "Tissue type",
+           y = expression(~{delta}^15*N~'(\u2030)'), 
+           title = "(B) Nitrogen values")
+    )
+ )
+
+# Save to ffile
+ggsave("figs/boxplot_by-tissue.pdf", plot = outliers.p, device = cairo_pdf, 
+       height = 4, width = 8)
+```
+
+### Offset stats
+
+```{r test for differences between tissues}
+hist(df1$d15N_fin)
+hist(df1$d15N)
+
+shapiro_test(log10(df1$d15N_fin))
+shapiro_test(log10(df1$d15N))
+
+shapiro_test(sqrt(df1$d15N_fin))
+shapiro_test(sqrt(df1$d15N))
+
+hist(sqrt(df1$d15N_fin))
+hist(sqrt(df1$d15N))
+
+
+
+t.test(df1$d13C_fin_lc, df1$d13C_lc, paired = TRUE)
+t.test(df1$d15N_fin, df1$d15N, paired = TRUE)
+
+lsr::cohensD(df1$d13C_fin_lc, df1$d13C_lc, method = "paired")
+lsr::cohensD(df1$d15N_fin, df1$d15N, method = "paired")
+
+
+# wilcox.test(df1$d13C_fin_lc, df1$d13C_lc, paired = TRUE)
+# wilcox.test(df1$d15N_fin, df1$d15N, paired = TRUE)
+
+```
+
+# 3. Model Assumptions
+
+## Independence of observations
+Because we only have one independent variable (fins isotope values) and one dependent variable (muscle isotope values), we don’t need to test for any hidden relationships among variables.
+
+## Normality
+```{r muscle carbon}
+ggpubr::ggarrange(
+  ggpubr::ggdensity(df1$d13C_lc, 
+                    main = "Density Plot", xlab = "d13C_lc"),
+  ggpubr::ggqqplot(df1$d13C_lc, 
+                   main = "Q-Q Plot", xlab = "d13C_lc"), ncol = 2)
+
+shapiro.test(df1$d13C_lc)
+```
+
+```{r fin carbon}
+ggpubr::ggarrange(
+  ggpubr::ggdensity(df1$d13C_fin_lc, 
+                    main = "Density Plot", xlab = "d13C_fin_lc"),
+  ggpubr::ggqqplot(df1$d13C_fin_lc, 
+                   main = "Q-Q Plot", xlab = "d13C_fin_lc"), ncol = 2)
+
+shapiro.test(df1$d13C_fin_lc)
+```
+
+```{r muscle nitrogen}
+ggpubr::ggarrange(
+  ggpubr::ggdensity(df1$d15N, 
+                    main = "Density Plot", xlab = "d15N"),
+  ggpubr::ggqqplot(df1$d15N, 
+                   main = "Q-Q Plot", xlab = "d15N"), ncol = 2)
+
+shapiro.test(df1$d15N)
+```
+
+```{r fin nitrogen}
+ggpubr::ggarrange(
+  ggpubr::ggdensity(df1$d15N_fin, 
+                    main = "Density Plot", xlab = "d15N_fin"),
+  ggpubr::ggqqplot(df1$d15N_fin, 
+                   main = "Q-Q Plot", xlab = "d15N_fin"),ncol = 2)
+
+shapiro.test(df1$d15N_fin)
+```
+
+Carbon is normallly distributed, nitorgen not, which is skewed. 
+
+## Linearity
+```{r carbon scatterplot}
+df1 %>% 
+  ggplot(aes(x = d13C_fin_lc, y = d13C_lc)) + 
+  geom_point() + 
+  geom_abline(linetype = "dashed", slope = 1, intercept = 0, color = "grey")
+
+```
+
+```{r nitrogen scatterplot}
+df1 %>% 
+  ggplot(aes(x = d15N_fin, y = d15N)) + 
+  geom_point() + 
+  geom_abline(linetype = "dashed", slope = 1, intercept = 0, color = "grey")
+```
+Muscle-fin isotope relationships are linear for both carbon and nitrogen. 
+
+## Ontogenetic shifts
+
+```{r fig - ontogentic effects}
+ratios <- df1 %>% 
+  mutate(ratio_C = d13C_fin_lc / d13C_lc, 
+         ratio_N = d15N_fin / d15N) 
+
+# Carbon----
+
+# # Pearson correlation
+# df1 %>% 
+#   mutate(ratio_C = d13C_fin / d13C) %$%
+#   cor.test(ratio_C, length_mm, method = "pearson") %>% 
+#   tidy()
+# 
+# # Check slope values
+# df1 %>% 
+#   mutate(ratio_C = d13C_fin / d13C) %>% 
+#   lm(ratio_C ~ length_mm + taxon_code, data = .) %>% 
+#   tidy()
+
+# Plot
+c_fin_ratio_size <- 
+  df1 %>% 
+  mutate(ratio_C = d13C_fin_lc / d13C_lc) %>% 
+  ggplot(aes(x = length_mm, y = ratio_C)) +
+  geom_hline(yintercept = 1) +
+  geom_point(color = "black", fill = "gray", shape = 21) +
+  stat_cor(method = "pearson", label.x = 200, label.y = 1.1, size = 3)+ 
+  scale_x_continuous(limits = c(0,500)) + 
+  scale_y_continuous(limits = c(0.78, 1.1)) + 
+  theme_Publication() +
+  labs(x = "Total length (mm)",
+       y = expression(~{delta}^13*C["fin"]~":"~{delta}^13*C["muscle"]), 
+       title = "(A) Carbon values")
+
+
+# Nitrogen -----
+
+# # Plot
+# # Pearson correlation
+# df1 %>% 
+#   mutate(ratio_N = d15N_fin / d15N) %$%
+#   cor.test(ratio_N, length_mm, method = "pearson") %>% 
+#   tidy()
+# 
+# # Check slope values
+# df1 %>% 
+#   mutate(ratio_N = d15N_fin / d15N) %$%
+#   lm(ratio_N ~ length_mm + taxon_code, data = .) %>% 
+#   tidy()
+
+n_fin_ratio_size <- 
+  df1 %>% 
+  mutate(ratio_N = d15N_fin / d15N) %>% 
+  ggplot(aes(x = length_mm, y = ratio_N)) +
+  geom_hline(yintercept = 1) +
+  geom_point(color = "black", fill = "gray", shape = 21) +
+  stat_cor(method = "pearson", label.x = 200, label.y = 1.1, size = 3) + 
+  scale_x_continuous(limits = c(0,500)) + 
+  scale_y_continuous(limits = c(0.78, 1.1)) + 
+  theme_Publication() +
+  labs(x = "Total length (mm)",
+       y = expression(~{delta}^15*N["fin"]~":"~{delta}^15*N["muscle"]), 
+       title = "(B) Nitrogen values")
+
+( fin_mus_ratio_cor <- ggpubr::ggarrange(c_fin_ratio_size, n_fin_ratio_size) )
+
+ggsave("figs/fin-mus-ratio-corr.pdf", plot = fin_mus_ratio_cor, device = cairo_pdf,
+       height = 4, width = 8)
+
+```
+
+
+# 4. Linear modeling
+```{r set seed for reproducibility}
+set.seed(09222017)
+```
+
+```{r Split Data for Modeling}
+# Training dataset
+data_train <- df1 %>% 
+  group_by(taxon_code) %>% 
+  sample_frac(0.8) %>% 
+  ungroup() %>% 
+  arrange(common_name)
+
+# Test dataset
+data_test <- anti_join(df1, data_train, by = 'unique_id') %>% arrange(common_name)
+
+# Sample sizes 
+
+data_train %>% 
+  group_by(common_name) %>% 
+  tally() %>% 
+  summarise(mean = sum(n))
+
+data_test %>% 
+  group_by(common_name) %>% 
+  tally() %>% 
+  summarise(mean = sum(n))
+
+(spp_samp_size <- 
+  data_train %>% 
+  group_by(common_name) %>% 
+  tally())
+
+```
+
+## Global Models
+### Fit models
+```{r Fit Global Models}
+fit.global.C <- lm(d13C_lc ~ d13C_fin_lc, data = data_train)
+fit.global.N <- lm(d15N ~ d15N_fin, data = data_train)
+```
+
+### Model summary
+```{r Global Model Summary}
+# summary(fit.global.C)
+glance(fit.global.C)
+# par(mfrow=c(2,2))
+# plot(fit.global.C)
+# par(mfrow=c(1,1))
+
+# summary(fit.global.N)
+glance(fit.global.N)
+# par(mfrow=c(2,2))
+# plot(fit.global.N)
+# par(mfrow=c(1,1))
+
+#confint_tidy(fit.global.N, parm = "d15N_fin")
+```
+
+#### Cook's distcance
+Cook’s distance is a measure computed with respect to a given regression model and therefore is impacted only by the X variables included in the model. But, what does cook’s distance mean? It computes the influence exerted by each data point (row) on the predicted outcome.
+
+```{r Cook's distance}
+cooksd_C <- cooks.distance(fit.global.C)
+cooksd_C_line <- 4 * mean(cooksd_C, na.rm = TRUE)
+# plot(cooksd_C, pch="*", cex=2, main="C Influential Obs by Cooks distance")  # plot cook's distance
+# abline(h = 4*mean(cooksd_C, na.rm=T), col="red")  # add cutoff line
+# text(x=1:length(cooksd_C)+1, y=cooksd_C, 
+#      labels=ifelse(cooksd_C>4*mean(cooksd_C, na.rm=T), 
+#                    names(cooksd_C), ""), col = "red")  # add labels
+
+cooksd_C %>% 
+  enframe() %>% 
+  ggplot(aes(x = as.integer(name), y = value)) + 
+  geom_hline(yintercept = cooksd_C_line, linetype = "dashed") +
+  geom_point() + 
+  geom_point(data = subset(enframe(cooksd_C), value > cooksd_C_line), 
+             color = "red") + 
+  labs(x = "Sample ID", y = "Cook's Distance", 
+       title = "(A) Multispecies carbon regression model") + 
+  theme_Publication() ->
+  cook_c
+cook_c
+
+
+cooksd_N <- cooks.distance(fit.global.N)
+cooksd_N_line <- 4 * mean(cooksd_N, na.rm = TRUE)
+# plot(cooksd_N, pch="*", cex=2, main="N Influential Obs by Cooks distance")  # plot cook's distance
+# abline(h = 4*mean(cooksd_N, na.rm=T), col="red")  # add cutoff line
+# text(x=1:length(cooksd_N)+1, y=cooksd_N, 
+#      labels=ifelse(cooksd_N>4*mean(cooksd_N, na.rm=T), 
+#                    names(cooksd_N), ""), col = "red")  # add labels
+
+cooksd_N %>% 
+  enframe() %>% 
+  ggplot(aes(x = as.integer(name), y = value)) + 
+  geom_hline(yintercept = cooksd_N_line, linetype = "dashed") +
+  geom_point() + 
+  geom_point(data = subset(enframe(cooksd_N), value > cooksd_N_line), 
+             color = "red") +   
+  labs(x = "Sample ID", y = "Cook's Distance", 
+       title = "(B) Multispecies nitorgen regression model") + 
+   theme_Publication() ->
+  cook_n
+cook_n
+
+ggpubr::ggarrange(cook_c, cook_n, nrow = 2) -> cook_panel
+cook_panel
+
+ggsave("figs/cook_panel.pdf", plot = cook_panel, device = cairo_pdf, 
+       height = 5, width = 8)
+```
+
+Now lets find out the influential rows from the original data. If you extract and examine each influential row 1-by-1 (from below output), you will be able to reason out why that row turned out influential. It is likely that one of the X variables included in the model had extreme values.
+
+```{r influential obs.}
+# influential row numbers
+influential_C <- as.numeric(names(cooksd_C)[(cooksd_C > 4*mean(cooksd_C, na.rm=T))])
+
+# influential observations
+data_train[influential_C, ]
+
+
+# influential row numbers
+influential_N <- as.numeric(names(cooksd_N)[(cooksd_N > 4*mean(cooksd_N, na.rm=T))])
+
+# influential observations
+data_train[influential_N, ]
+```
+
+### Plot global models
+```{r Plot global models}
+# Carbon ----
+# Set custom labels
+format_pval <- function(pval){
+  pval <- scales::pvalue(pval, accuracy= 0.001, add_p = TRUE)
+  gsub(pattern = "(=|<)", replacement = " \\1 ", x = pval)
+}
+# model_label <- c("italic(P) < 0.001", 
+#                  paste("Adj~italic(R)^2 ==", signif(summary(fit.global.C)$adj.r.squared, 2)))
+# Set coords
+min(data_train$d13C_fin_lc)
+max(data_train$d13C_fin_lc)
+min(data_train$d13C_lc)
+max(data_train$d13C_lc)
+
+coord_x <- min(data_train$d13C_fin_lc)
+coord_y <- max(data_train$d13C_lc)
+
+# Get model fiT and 95% CIs and bind to raw data
+fit_pred <- fit.global.C %>% 
+  predict(newdata = data_train, interval = 'confidence') %>% 
+  as_tibble() %>% 
+  bind_cols(data_train)
+
+# Plot
+p.lfit.global.Carbon <- 
+  fit_pred %>% 
+  left_join(data_fish_groups, by = "common_name") %>% 
+  ggplot(aes(x = d13C_fin_lc, y = d13C_lc)) + 
+  geom_abline(linetype = "dashed", slope = 1, intercept = 0, color = "grey45") +
+  # geom_abline(linetype = "dashed", slope = 0.82, intercept = -5.89, color = "red") +
+  # geom_abline(linetype = "dashed", slope = 0.89, intercept = -3.27, color = "blue") +
+  geom_point(color = "black", fill = "grey90", shape = 21, size = 2, alpha = 0.75) +
+  geom_ribbon(aes(x = d13C_fin_lc, ymin = lwr, ymax = upr), alpha = 0.3, color = NA) +
+  geom_line(aes(x = d13C_fin_lc, y = fit), size = 1) +
+  scale_x_continuous(limits = c(-31,-22), breaks = seq(-30,-22,2)) +
+  scale_y_continuous(limits = c(-32.5,-21.7), breaks = seq(-32,-22,2)) +
+  labs(x = expression(~{delta}^13*C["fin"]~'\u2030'), 
+       y = expression(~{delta}^13*C["muscle"]~'\u2030'), 
+       shape = "Family",
+       fill = "",
+       title = "(A) Multi-species carbon model") +
+  stat_cor(label.y = -22.5, aes(label = paste(..rr.label.., format_pval(..p..), sep = "*`,`~")), size = 3) +
+  stat_regline_equation(label.y = -24, size = 3)+
+  annotate(geom = "text", x = -24.5, y = -23, label = "1:1 line", color = "grey45", family = "Times") +
+  # annotate(geom = "text", x = coord_x, y = c(-22, -23), 
+  #            hjust = 0, label = model_label, parse = TRUE, family = "Times") +
+  theme_Publication() + 
+  theme(plot.margin = unit(c(1,1,1,1),"mm"))
+
+p.lfit.global.Carbon
+
+# ggsave(filename = "figs/scatterplot-global-carbon.pdf",
+#        plot = p.lfit.global.Carbon, device = cairo_pdf,
+#        units = "in", width = 8, height = 6)
+
+# Nitrogen ----
+#Set custom labels
+model_label <- c("italic(P) < 0.001", 
+                 paste("Adj~italic(R)^2 ==", signif(summary(fit.global.N)$adj.r.squared, 2)))
+#Set coords
+min(data_train$d15N_fin)
+max(data_train$d15N_fin)
+min(data_train$d15N)
+max(data_train$d15N)
+
+coord_x <- min(data_train$d15N_fin)
+coord_y <- max(data_train$d15N)
+
+# Get model fiT and 95% CIs and bind to raw data
+fit_pred <- fit.global.N %>% 
+  predict(newdata = data_train, interval = 'confidence') %>% 
+  as_tibble() %>% 
+  bind_cols(data_train)
+
+#Plot
+p.lfit.global.Nitorgen <- 
+  fit_pred %>% 
+  left_join(data_fish_groups, by = "common_name") %>% 
+  ggplot(aes(x = d15N_fin, y = d15N)) + 
+  geom_abline(linetype = "dashed", slope = 1, intercept = 0, color = "grey45") +
+  # geom_abline(linetype = "dashed", slope = 1.01, intercept = 0.74, color = "red") +
+  # geom_abline(linetype = "dashed", slope = 0.81, intercept = 1.73, color = "blue") +
+  geom_point(color = "black", fill = "grey90", shape = 21, size = 2, alpha = 0.75) +
+  geom_ribbon(aes(x = d15N_fin, ymin = lwr, ymax = upr), alpha = 0.3, color = NA) +
+  geom_line(aes(x = d15N_fin, y = fit), size = 1) +
+  scale_x_continuous(limits = c(5,16), breaks = seq(6,16,2)) +
+  scale_y_continuous(limits = c(6,16), breaks = seq(6,16,2)) +
+  labs(x = expression(~{delta}^15*N["fin"]~'\u2030'), 
+       y = expression(~{delta}^15*N["muscle"]~'\u2030'), 
+       shape = "Family",
+       fill = "",
+       title = "(B) Multi-species nitrogen model") +
+  stat_cor(label.y = 15.5, aes(label = paste(..rr.label.., format_pval(..p..), sep = "~`,`~")), size = 3) +
+  stat_regline_equation(label.y = 14, size = 3) +
+  annotate(geom = "text", x = 14.5, y = 13, label = "1:1 line", color = "grey45", family = "Times") +
+  # annotate(geom = "text", x = coord_x, y = c(15.5, 14.5), 
+  #            hjust = 0, label = model_label, parse = TRUE, family = "Times") +
+  theme_Publication() + 
+  theme(plot.margin = unit(c(1,1,1,1),"mm"))
+
+p.lfit.global.Nitorgen
+
+# ggsave(filename = "figs/scatterplot-global-nitrogen.pdf",
+#        plot = p.lfit.global.Nitorgen, device = cairo_pdf,
+#        units = "in", width = 8, height = 6)
+
+# Panel plot ----
+p.global.panel <- 
+  ggpubr::ggarrange(p.lfit.global.Carbon, p.lfit.global.Nitorgen,
+                    nrow = 1, ncol = 2)
+p.global.panel
+
+ggsave(filename = "figs/fig1.pdf", 
+       plot = p.global.panel, device = cairo_pdf,
+       units = "in", width = 8.5, height = 4)
+```
+
+## Species-Specific Models
+### Plot species panels
+```{r species panel carbon}
+# Custom formatting fucntion
+format_pval <- function(pval){
+  pval <- scales::pvalue(pval, accuracy= 0.001, add_p = TRUE)
+  gsub(pattern = "(=|<)", replacement = " \\1 ", x = pval)
+}
+
+p.spp.panel.carbon <- 
+  data_train %>% 
+  ggplot(aes(x = d13C_fin_lc, y = d13C_lc)) + 
+  geom_point(data=data_train[,c("d13C_lc","d13C_fin_lc","unique_id")], 
+             aes(x=d13C_fin_lc, y=d13C_lc, group=unique_id), 
+             size = 1, colour="grey85") +
+  geom_point(size = 1, color = "black", fill = "grey90", shape = 21) +
+  stat_cor(label.y = -22.5, aes(label = paste(..rr.label.., format_pval(..p..), sep = "*`,`~")), size = 3) +
+  stat_regline_equation(label.y = -24, size = 3)+
+  geom_smooth(aes(group = common_name), method = "lm", col = "black", se = FALSE) +
+  geom_abline(linetype = "dashed", slope = 1, intercept = 0, color = "black") +
+  lemon::facet_rep_wrap(~common_name, nrow = 3) + 
+  labs(x = expression(~{delta}^13*C["fin"]~'\u2030'),
+       y = expression(~{delta}^13*C["muscle"]~'\u2030')) +
+  scale_x_continuous(limits = c(-30.7,-21.7), breaks = seq(-30,-22,4)) +
+  scale_y_continuous(limits = c(-32.5,-22), breaks = seq(-32,-22,4)) +
+  theme_Publication() 
+p.spp.panel.carbon
+
+ggsave(filename = "figs/fig2.pdf", 
+       plot = p.spp.panel.carbon, device = cairo_pdf, 
+       units = "in", width = 10, height = 6)
+
+```
+
+```{r species panel nitrgoen}
+p.spp.panel.nitorgen <- 
+  data_train %>% 
+  ggplot(aes(x = d15N_fin, y = d15N)) + 
+  geom_point(data = data_train[,c("d15N","d15N_fin","unique_id")], 
+             aes(x = d15N_fin, y = d15N, group = unique_id), 
+             size = 1, colour = "grey85") +
+  geom_point(size = 1, color = "black", fill = "grey90", shape = 21) +
+  stat_cor(label.y = 15.5, aes(label = paste(..rr.label.., format_pval(..p..), sep = "~`,`~")), size = 3) +
+  stat_regline_equation(label.y = 14, size = 3) +
+  geom_smooth(aes(group = common_name), method = "lm", col = "black", se = FALSE) +
+  geom_abline(linetype = "dashed", slope = 1, intercept = 0, color = "black") +
+  lemon::facet_rep_wrap(~common_name, nrow = 3) + 
+  labs(x = expression(~{delta}^15*N["fin"]~'\u2030'),
+       y = expression(~{delta}^15*N["muscle"]~'\u2030')) +
+  scale_x_continuous(limits = c(5.7,16), breaks = seq(6,16,4)) +
+  scale_y_continuous(limits = c(6,16), breaks = seq(6,16,4))  +
+  theme_Publication()
+p.spp.panel.nitorgen
+
+ggsave(filename = "figs/fig3.pdf", 
+       plot = p.spp.panel.nitorgen, device = cairo_pdf, 
+       units = "in", width = 10, height = 6)
+```
+
+### Fit species-specific models
+```{r Fit species-specific models}
+
+# create first dataset - 70% for running the model
+data_train_nested <- 
+  data_train %>% 
+  select(d15N, d15N_fin, d13C_lc, d13C_fin_lc, common_name) %>%
+  group_by(common_name) %>% 
+  nest() %>%
+  rename(myorigdata = data)
+
+# create second dataset - 20% for making predictions
+data_test_nested <- 
+  data_test %>% 
+  select(d15N, d15N_fin, d13C_lc, d13C_fin_lc, common_name) %>%
+  group_by(common_name) %>% 
+  nest() %>% 
+  rename(mynewdata = data)
+
+# Do the regressions
+regressions <- 
+  data_train_nested %>% 
+  mutate(
+    fit_C = map(.x = myorigdata, .f = ~ lm(d13C_lc ~ d13C_fin_lc, data = .)),
+    fit_N = map(.x = myorigdata, .f = ~ lm(d15N ~ d15N_fin, data = .)),
+
+    ci_C = map(fit_C, function(df) confint_tidy(df, parm = "d13C_fin_lc")),
+    ci_N = map(fit_N, function(df) confint_tidy(df, parm = "d15N_fin")),
+
+    tidy_C = map(fit_C, tidy),
+    tidy_N = map(fit_N, tidy),
+
+    glance_C = map(fit_C, glance),
+    glance_N = map(fit_N, glance),
+
+    augment_C = map(fit_C, augment),
+    augment_N = map(fit_N, augment)
+    ) %>% 
+  ungroup()
+regressions
+
+```
+
+### Examine residuals
+```{r Homoscedasticity}
+regressions %>% unnest(augment_C) %>% 
+  ggplot(aes(d13C_fin_lc, .resid)) +
+    geom_point(alpha = 1 / 3) + 
+    geom_smooth(method = "lm", se = FALSE) + 
+  facet_wrap(~common_name)
+
+regressions %>% unnest(augment_N) %>% 
+  ggplot(aes(d15N_fin, .resid)) +
+    geom_point(alpha = 1 / 3) + 
+    geom_smooth(method = "lm", se = FALSE) + 
+  facet_wrap(~common_name) 
+```
+
+### Predictions
+```{r Predict dataframe}
+predictions_spp <- 
+  regressions %>% 
+  select(common_name, fit_C, fit_N) %>% 
+  full_join(data_test_nested, by = "common_name") %>% 
+  mutate(pred_spp_C = map2(fit_C, mynewdata, predict),
+         pred_spp_N = map2(fit_N, mynewdata, predict)) %>% 
+  select(common_name, mynewdata, pred_spp_C, pred_spp_N) %>%
+  unnest(c(mynewdata, pred_spp_C, pred_spp_N)) %>% 
+  ungroup()
+predictions_spp
+```
+
+### Calculate error
+
+```{r Model fit summary - R2 and p-vals}
+spp_model_summaries <- 
+    bind_rows(
+      regressions %>% 
+        unnest(glance_C, .drop = TRUE) %>% 
+        select(common_name, r.squared, p.value) %>%  
+        mutate(isotope = "carbon") %>% 
+        select(common_name, isotope, r.squared, p.value),
+      regressions %>% 
+        unnest(glance_N, .drop = TRUE) %>% 
+        select(common_name, r.squared, p.value) %>%  
+        mutate(isotope = "nitrogen") %>% 
+        select(common_name, isotope, r.squared, p.value), 
+      bind_rows(
+        glance(fit.global.C) %>% 
+          select(r.squared, p.value) %>% 
+          mutate(common_name = "Global", isotope = "carbon") %>% 
+         select(common_name, isotope, r.squared, p.value),
+       glance(fit.global.N) %>% 
+         select(r.squared, p.value) %>% 
+         mutate(common_name = "Global", isotope = "nitrogen") %>% 
+         select(common_name, isotope, r.squared, p.value))) %>% 
+  mutate(common_name = factor(common_name, levels = c(
+      "Global","Bigmouth Shiner","Brassy Minnow","Common Shiner","Creek Chub",
+      "Fathead Minnow","Freshwater Drum", "Hornyhead Chub",
+      "Johnny Darter","Longnose Dace","Longnose Sucker",
+      "Red Shiner", "Sand Shiner","Shorthead Redhorse",
+      "Smallmouth Bass","White Sucker"))) %>%
+  arrange(isotope,common_name) %>% 
+  mutate_if(is.numeric, round, 3) %>% 
+  mutate(p.value = if_else(p.value<0.001,paste("<0.001"),paste(p.value))) %>% 
+  print(n= Inf)
+
+spp_model_summaries %>%
+  ggplot(aes(x = common_name, y = r.squared, fill = isotope)) +
+  geom_point(shape = 21, size = 4) +
+  coord_flip() +
+  geom_hline(linetype = "dashed", yintercept = 0.8, color = "grey") +
+  scale_fill_grey() +
+  #scale_y_continuous(limits = c(0.3,1), breaks = seq(0,1,0.1)) +
+  labs(x = "Fish Species", y = expression(italic(R)^2),
+       title = expression("Comparing Gobal and Species-specific Models")) +
+  theme_classic(base_size = 16) +
+  theme(axis.text.x = element_text(face="bold", size = 12))
+
+spp_model_summaries %>%
+  ggplot(aes(x = common_name, y = p.value, fill = isotope)) +
+  geom_point(shape = 21, size = 4) +
+  coord_flip() +
+  #geom_hline(linetype = "dashed", yintercept = 0.75, color = "grey") +
+  scale_fill_grey() +
+  #scale_y_continuous(limits = c(0.3,1), breaks = seq(0,1,0.1)) +
+  labs(x = "Fish Species", y = "p-val",
+       title = expression("Comparing Gobal and Species-specific Models")) +
+  theme_classic(base_size = 16) +
+  theme(axis.text.x = element_text(face="bold", size = 12))
+
+```
+
+```{r Table of model fits}
+df_lm_summary <-
+  spp_model_summaries %>% 
+  
+  left_join(
+    bind_rows(
+      regressions %>% 
+        group_by(common_name) %>% 
+        unnest(tidy_C) %>% 
+        select(term, estimate) %>% 
+        spread(term, estimate) %>% 
+        mutate(isotope = "carbon") %>% 
+        rename(intc = "(Intercept)", coef = d13C_fin_lc) %>% 
+        select(common_name, isotope, intc, coef),
+      regressions %>% 
+        group_by(common_name) %>% 
+        unnest(tidy_N) %>% 
+        select(term, estimate) %>% 
+        spread(term, estimate) %>% 
+        mutate(isotope = "nitrogen") %>% 
+        rename(intc = "(Intercept)", coef = d15N_fin) %>% 
+        select(common_name, isotope, intc, coef),
+      bind_rows(
+        tidy(fit.global.C) %>% 
+          select(term, estimate) %>% 
+          spread(term, estimate) %>% 
+          mutate(common_name = "Global", isotope = "carbon") %>% 
+          rename(intc = "(Intercept)", coef = d13C_fin_lc) %>% 
+          select(common_name, isotope, intc, coef),
+        tidy(fit.global.N) %>% 
+          select(term, estimate) %>% 
+          spread(term, estimate) %>% 
+          mutate(common_name = "Global", isotope = "nitrogen") %>% 
+          rename(intc = "(Intercept)", coef = d15N_fin) %>% 
+          select(common_name, isotope, intc, coef))),
+    by = c("common_name","isotope")) %>%
+  
+  cleave_by(isotope) %>% 
+  bind_cols() %>% 
+  select(common_name,
+         R2_C=r.squared,intc_C=intc,coef_C=coef,Pval_C=p.value, 
+         R2_N=r.squared1,intc_N=intc1,coef_N=coef1,Pval_N=p.value1) %>% 
+  left_join(
+    bind_rows(
+      regressions %>% 
+        unnest(ci_C, .drop = TRUE) %>% 
+        select(common_name, conf.low.C=conf.low, conf.high.C=conf.high) %>% 
+        left_join(regressions %>% 
+                    unnest(ci_N, .drop = TRUE) %>% 
+                    select(common_name, conf.low.N=conf.low, conf.high.N=conf.high),
+                  by = "common_name"),
+      confint_tidy(fit.global.C, parm = "d13C_fin_lc") %>% 
+      mutate(common_name="Global") %>% 
+      select(common_name, conf.low.C=conf.low, conf.high.C=conf.high) %>% 
+      left_join(confint_tidy(fit.global.N, parm = "d15N_fin") %>% 
+                  mutate(common_name="Global") %>% 
+                  select(common_name, conf.low.N=conf.low, conf.high.N=conf.high), 
+                by="common_name"))) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  mutate(coef_C = paste0(coef_C," (",conf.low.C,"-",conf.high.C,")"), 
+         coef_N = paste0(coef_N," (",conf.low.N,"-",conf.high.N,")")) %>% 
+  select(-conf.low.C, -conf.low.N, -conf.high.C, -conf.high.N) %>% 
+  left_join(spp_samp_size, by = "common_name") %>% 
+  left_join(data_fish_groups, by = "common_name") %>% 
+  mutate(n = if_else(common_name=="Global", nrow(data_train), n)) %>% 
+  arrange(family) %>%   
+  select(common_name, n, R2_C, intc_C, coef_C, Pval_C, R2_N, intc_N, coef_N, Pval_N) %>% 
+  write_csv("tables/lm_summary.csv")
+
+df_lm_summary
+
+```
+
+# 5. Testing linear models 
+```{r Calculate error for each isotope and model by species}
+# Calculate error for each isotope
+error_d13C <-  predictions_spp %>% 
+  mutate(pred_global = predict(fit.global.C, data_test),
+         pred_Hette = 0.82 * d13C_fin_lc - 5.89, 
+         pred_Jardine  = 0.89 * d13C_fin_lc - 3.27, 
+         
+         species = abs(d13C_lc - pred_spp_C),
+         global = abs(d13C_lc - pred_global),
+         hette = abs(d13C_lc - pred_Hette), 
+         jardine = abs(d13C_lc - pred_Jardine)) %>% 
+  select(common_name, species, global, hette, jardine) %>%
+  
+  #Now summarize data
+  group_by(common_name) %>% 
+  summarise_all(list(mean = mean, sd = sd)) %>% 
+  gather(key = "key", value = "value", -common_name) %>% 
+  separate(key, into = c("model","statistic"), sep = "_") %>% 
+  spread(key = statistic, value = value) %>% 
+  mutate_if(is.character, as.factor) %>% 
+  mutate(model = factor(model, levels = c("species","global", "hette","jardine"))) %>% 
+  mutate(isotope = "Carbon") 
+error_d13C
+
+error_d15N <- 
+  predictions_spp %>% 
+  mutate(pred_global = predict(fit.global.N, data_test),
+         pred_Hette = 1.01 * d15N_fin + 0.74, 
+         pred_Jardine  = 0.81 * d15N_fin + 1.73, 
+         
+         species = abs(d15N - pred_spp_N),
+         global = abs(d15N - pred_global),
+         hette = abs(d15N - pred_Hette), 
+         jardine = abs(d15N - pred_Jardine)) %>% 
+  select(common_name, species, global, hette, jardine) %>%
+  
+  #Now summarize data
+  group_by(common_name) %>% 
+  summarise_all(list(mean = mean, sd = sd)) %>% 
+  gather(key = "key", value = "value", -common_name) %>% 
+  separate(key, into = c("model","statistic"), sep = "_") %>% 
+  spread(key = statistic, value = value) %>% 
+  mutate_if(is.character, as.factor) %>% 
+  mutate(model = factor(model, levels = c("species","global", "hette","jardine"))) %>% 
+  mutate(isotope = "Nitrogen")
+error_d15N
+
+error_df <- bind_rows(error_d13C, error_d15N)
+error_df
+```
+
+```{r plot model error by species}
+
+labels <- c(Carbon = "(A) Carbon error", Nitrogen = "(B) Nitrogen error")
+
+p.error.panel <- 
+  error_df %>% 
+  left_join(data_fish_groups, by = "common_name") %>% 
+  
+  ggplot(aes(x = factor(common_name, levels = rev(levels(factor(common_name)))), 
+             y = mean, group = model, color = model, fill = model)) +
+
+  geom_rect(xmin = 1.5, xmax = 2.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 3.5, xmax = 4.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 5.5, xmax = 6.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 7.5, xmax = 8.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 9.5, xmax = 10.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 11.5, xmax = 12.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 13.5, xmax = 14.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+
+  geom_abline(linetype = "dashed", slope = 0, intercept = 0.1) +
+  geom_pointrange(data = subset(error_df, model %in% c("species","global","hette","jardine")),
+                  aes(ymin = mean - sd, ymax = mean + sd),
+                  position = position_dodge(width = 0.5),na.rm = TRUE) +
+  geom_point(data = subset(error_df, model %in% c("species","global","hette","jardine")), 
+             aes(x = factor(common_name, levels = rev(levels(factor(common_name)))), y = mean),
+             position = position_dodge(width = 0.5), size = 3, color = "black", shape = 21, na.rm = TRUE) +
+  geom_line(data = subset(error_df, model %in% c("species","global","hette","jardine")), 
+            position = position_dodge(width = 0.5), na.rm = TRUE) + 
+  coord_flip() +
+  scale_y_continuous(limits = c(0,2)) +
+  scale_colour_manual(values = c("#440154FF","#31688EFF","#35B779FF","#FDE725FF"), guide=FALSE) +
+  scale_fill_manual(values = c("#440154FF","#31688EFF","#35B779FF","#FDE725FF"),
+                      labels = c("Species specific", "Multi-species", "European","Australian")) +  
+  lemon::facet_rep_wrap(~isotope, labeller=labeller(isotope = labels), 
+                        nrow = 1) + 
+  labs(x = "", 
+       y = expression('Error '~{delta}^x*x~'\u2030'), 
+       fill = "Conversion\nModel") +
+  theme_Publication() + 
+  theme(strip.text=element_text(hjust = 0))
+
+p.error.panel
+
+ggsave(filename = "figs/fig5.pdf",
+       plot = p.error.panel, device = cairo_pdf,
+       units = "in", width = 10, height = 6)
+```
+
+```{r plot model error}
+error_d13C_spp <-
+  error_d13C %>% 
+  filter(isotope=="Carbon") %>% 
+  left_join(data_fish_groups, by = "common_name") %>% 
+  
+  ggplot(aes(x = factor(common_name, levels = rev(levels(factor(common_name)))), 
+             y = mean, group = model, color = model, fill = model)) +
+
+  geom_rect(xmin = 1.5, xmax = 2.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 3.5, xmax = 4.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 5.5, xmax = 6.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 7.5, xmax = 8.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 9.5, xmax = 10.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 11.5, xmax = 12.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 13.5, xmax = 14.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+
+  geom_abline(linetype = "dashed", slope = 0, intercept = 0.08) +
+  geom_pointrange(data = subset(error_d13C, model %in% c("species","global","hette","jardine")),
+                  aes(ymin = mean - sd, ymax = mean + sd),
+                  position = position_dodge(width = 0.5),na.rm = TRUE) +
+  geom_point(data = subset(error_d13C, model %in% c("species","global","hette","jardine")), 
+             aes(x = factor(common_name, levels = rev(levels(factor(common_name)))), y = mean),
+             position = position_dodge(width = 0.5), size = 3, color = "black", shape = 21, na.rm = TRUE) +
+  geom_line(data = subset(error_d13C, model %in% c("species","global","hette","jardine")), 
+            position = position_dodge(width = 0.5), na.rm = TRUE) + 
+  coord_flip() +
+  scale_y_continuous(limits = c(0,2)) +
+  scale_colour_manual(values = c("#440154FF","#31688EFF","#35B779FF","#FDE725FF"), guide=FALSE) +
+  scale_fill_manual(values = c("#440154FF","#31688EFF","#35B779FF","#FDE725FF"),
+                      labels = c("Species specific", "Multi-species", "European","Australian")) +  
+  labs(x = "", 
+       y = "", 
+       fill = "Conversion\nModel", 
+       title = expression('(A)'~{delta}^13*C~'Error')) +
+  theme_Publication() 
+error_d13C_spp
+
+error_d15N_spp <-
+  error_d15N %>% 
+  filter(isotope=="Nitrogen") %>% 
+  left_join(data_fish_groups, by = "common_name") %>% 
+  
+  ggplot(aes(x = factor(common_name, levels = rev(levels(factor(common_name)))), 
+             y = mean, group = model, color = model, fill = model)) +
+
+  geom_rect(xmin = 1.5, xmax = 2.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 3.5, xmax = 4.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 5.5, xmax = 6.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 7.5, xmax = 8.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 9.5, xmax = 10.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 11.5, xmax = 12.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+  geom_rect(xmin = 13.5, xmax = 14.5, ymin = -Inf, ymax = 2.07, fill = "grey90", color = "gray90") +
+
+  geom_abline(linetype = "dashed", slope = 0, intercept = 0.1) +
+  geom_pointrange(data = subset(error_d15N, model %in% c("species","global","hette","jardine")),
+                  aes(ymin = mean - sd, ymax = mean + sd),
+                  position = position_dodge(width = 0.5),na.rm = TRUE) +
+  geom_point(data = subset(error_d15N, model %in% c("species","global","hette","jardine")), 
+             aes(x = factor(common_name, levels = rev(levels(factor(common_name)))), y = mean),
+             position = position_dodge(width = 0.5), size = 3, color = "black", shape = 21, na.rm = TRUE) +
+  geom_line(data = subset(error_d15N, model %in% c("species","global","hette","jardine")), 
+            position = position_dodge(width = 0.5), na.rm = TRUE) + 
+  coord_flip() +
+  scale_y_continuous(limits = c(0,2)) +
+  scale_colour_manual(values = c("#440154FF","#31688EFF","#35B779FF","#FDE725FF"), guide=FALSE) +
+  scale_fill_manual(values = c("#440154FF","#31688EFF","#35B779FF","#FDE725FF"),
+                      labels = c("Species specific", "Multi-species", "European","Australian")) +  
+  labs(x = "", 
+       y = "", 
+       fill = "Conversion\nModel", 
+       title = expression('(B)'~{delta}^15*N~'Error')) +
+  theme_Publication()  +
+  theme(axis.text.y = element_blank())
+error_d15N_spp
+
+p.error.panel <- 
+  ggarrange(error_d13C_spp, error_d15N_spp, 
+            widths = c(1,0.74), 
+            common.legend = TRUE, 
+            legend = "right"
+            ) %>% 
+  annotate_figure(bottom = text_grob(expression('Error '~{delta}^x*x~'\u2030'), 
+                                     vjust = -1, hjust = 0.2))
+p.error.panel
+
+ggsave(filename = "figs/model-error-summary-panel.pdf",
+       plot = p.error.panel, device = cairo_pdf,
+       units = "in", width = 10, height = 6)
+
+```
+
+```{r Calculate error for each isotope and model}
+error_d13C_test <- predictions_spp %>% 
+  mutate(pred_global = predict(fit.global.C, data_test),
+         pred_Hette = 0.82 * d13C_fin_lc - 5.89, 
+         pred_Jardine  = 0.89 * d13C_fin_lc - 3.27, 
+         
+         species = abs(d13C_lc - pred_spp_C),
+         global = abs(d13C_lc - pred_global),
+         hette = abs(d13C_lc - pred_Hette), 
+         jardine = abs(d13C_lc - pred_Jardine)) %>% 
+  select(common_name, species, global, hette, jardine) %>%
+  gather(key = "key", value = "value", -common_name) %>% 
+  rename(model = key, mean = value) %>% 
+  mutate_if(is.character, as.factor) %>% 
+  mutate(model = factor(model, levels = c("species","global", "hette","jardine"))) %>% 
+  mutate(isotope = "Carbon") 
+error_d13C_test
+
+error_d15N_test <- 
+  predictions_spp %>% 
+  mutate(pred_global = predict(fit.global.N, data_test),
+         pred_Hette = 1.01 * d15N_fin + 0.74, 
+         pred_Jardine  = 0.81 * d15N_fin + 1.73, 
+         
+         species = abs(d15N - pred_spp_N),
+         global = abs(d15N - pred_global),
+         hette = abs(d15N - pred_Hette), 
+         jardine = abs(d15N - pred_Jardine)) %>% 
+  select(common_name, species, global, hette, jardine) %>%
+  gather(key = "key", value = "value", -common_name) %>% 
+  rename(model = key, mean = value) %>% 
+  mutate_if(is.character, as.factor) %>% 
+  mutate(model = factor(model, levels = c("species","global", "hette","jardine"))) %>% 
+  mutate(isotope = "Nitrogen")
+error_d15N_test
+
+error_df_test <- bind_rows(error_d13C_test, error_d15N_test)
+error_df_test
+```
+
+```{r Error summary table}
+error_summary <- 
+  error_df_test %>% 
+    group_by(isotope, model) %>% 
+    summarise(mean_all = mean(mean), sd_all = sd(mean))  %>% 
+    ungroup() %>% 
+    mutate_if(is.numeric, round, 2) %>% 
+  pivot_wider(names_from = isotope, values_from = c(mean_all, sd_all)) %>% 
+    mutate(mean_err_C = paste0(mean_all_Carbon," (",sd_all_Carbon,")"), 
+          mean_err_N = paste0(mean_all_Nitrogen," (",sd_all_Nitrogen,")")) %>% 
+    select(-mean_all_Carbon, -mean_all_Nitrogen, -sd_all_Carbon, -sd_all_Nitrogen) %>% 
+    arrange(model) %>% 
+    write_csv("tables/error_summary.csv")
+error_summary
+```
+
+## Test for differecnes amoung predicted model errors
+
+```{r}
+error_d13C_test <- predictions_spp %>% 
+  mutate(pred_global = predict(fit.global.C, data_test),
+         pred_Hette = 0.82 * d13C_fin_lc - 5.89, 
+         pred_Jardine  = 0.89 * d13C_fin_lc - 3.27, 
+         
+         species = abs(d13C_lc - pred_spp_C),
+         global = abs(d13C_lc - pred_global),
+         hette = abs(d13C_lc - pred_Hette), 
+         jardine = abs(d13C_lc - pred_Jardine)) %>% 
+  select(common_name, species, global, hette, jardine) %>%
+  gather(key = "key", value = "value", -common_name) %>% 
+  rename(model = key, mean = value) %>% 
+  mutate_if(is.character, as.factor) %>% 
+  mutate(model = factor(model, levels = c("species","global", "hette","jardine"))) 
+error_d13C_test
+
+error_d15N_test <- 
+  predictions_spp %>% 
+  mutate(pred_global = predict(fit.global.N, data_test),
+         pred_Hette = 1.01 * d15N_fin + 0.74, 
+         pred_Jardine  = 0.81 * d15N_fin + 1.73, 
+         
+         species = abs(d15N - pred_spp_N),
+         global = abs(d15N - pred_global),
+         hette = abs(d15N - pred_Hette), 
+         jardine = abs(d15N - pred_Jardine)) %>% 
+  select(common_name, species, global, hette, jardine) %>%
+  gather(key = "key", value = "value", -common_name) %>% 
+  rename(model = key, mean = value) %>% 
+  mutate_if(is.character, as.factor) %>% 
+  mutate(model = factor(model, levels = c("species","global", "hette","jardine"))) 
+error_d15N_test
+
+```
+
+```{r Stats}
+
+hist(error_d13C_test$mean)
+hist(error_d15N_test$mean)
+
+shapiro_test(sqrt(error_d13C_test$mean))
+shapiro_test(sqrt(error_d15N_test$mean))
+
+hist(sqrt(error_d13C_test$mean))
+hist(sqrt(error_d15N_test$mean))
+
+
+error_d13C_test %>%
+  mutate(mean = sqrt(mean)) %>% 
+  anova_test(mean ~ model)
+
+pairwise.carbon <- error_d13C_test %>% 
+  mutate(mean = sqrt(mean)) %>% 
+  t_test(mean ~ model, p.adjust.method = "bonferroni", detailed = TRUE) %>% 
+  as_tibble() %>% 
+  select(-n2, -p, -method, -alternative) %>% 
+  mutate(y.position = c(1.4, 1.6, 2, 1.8, 2.2, 2.4))
+pairwise.carbon
+
+error_d13C_test %>%
+  mutate(mean = sqrt(mean)) %>% 
+  cohens_d(mean ~ model)
+
+
+
+error_d15N_test %>%
+  mutate(mean = sqrt(mean)) %>% 
+  anova_test(mean ~ model)
+
+pairwise.nitrogen <- error_d15N_test %>% 
+  mutate(mean = sqrt(mean)) %>% 
+  t_test(mean ~ model, p.adjust.method = "bonferroni", detailed = TRUE) %>% 
+  as_tibble() %>% 
+  select(-n2, -p, -method, -alternative) %>% 
+  mutate(y.position = c(1.4, 1.6, 2, 1.8, 2.2, 2.4))
+pairwise.nitrogen
+
+error_d15N_test %>%
+  mutate(mean = sqrt(mean)) %>% 
+  cohens_d(mean ~ model)
+
+```
+
+```{r Stats}
+
+hist(error_d13C$mean)
+hist(error_d15N$mean)
+
+shapiro_test(log10(error_d13C$mean))
+shapiro_test(log10(error_d15N$mean))
+
+shapiro_test(sqrt(error_d13C$mean))
+shapiro_test(sqrt(error_d15N$mean))
+
+hist(sqrt(error_d13C$mean))
+hist(sqrt(error_d15N$mean))
+
+
+error_d13C %>%
+  mutate(mean = sqrt(mean)) %>% 
+  anova_test(mean ~ model)
+
+pairwise.carbon <- error_d13C %>% 
+  mutate(mean = sqrt(mean)) %>% 
+  t_test(mean ~ model, p.adjust.method = "bonferroni") %>% 
+  as_tibble() %>% 
+  mutate(y.position = c(1.4, 1.6, 2, 1.8, 2.2, 2.4))
+pairwise.carbon
+
+error_d15N %>%
+  mutate(mean = sqrt(mean)) %>% 
+  anova_test(mean ~ model)
+
+pairwise.nitrogen <- error_d15N %>% 
+  mutate(mean = sqrt(mean)) %>% 
+  t_test(mean ~ model, p.adjust.method = "bonferroni") %>% 
+  as_tibble() %>% 
+  mutate(y.position = c(1.4, 1.6, 2, 1.8, 2.2, 2.4))
+pairwise.nitrogen
+
+
+```
+
+```{r Error summarized boxplots}
+p.error.c.box <- 
+  error_d13C_test %>% 
+  ggboxplot(x = "model", y = "mean", fill = "model",
+            outlier.shape = NA, 
+            palette =c("#440154FF", "#31688EFF", "#35B779FF", "#FDE725FF")) +
+  geom_jitter(aes(fill = model), color="black", shape = 21,  size=1.5, alpha=0.5, 
+              position=position_jitter(0.1)) +
+  scale_x_discrete(labels = c("Species", "Multi-spp", "European","Australian")) +
+  scale_y_continuous(limits = c(0,2.5)) +
+  stat_summary(fun.y=mean, geom="point", shape=8, size=4, color="red", fill="red") +
+  stat_compare_means(label.y = 2.5, size = 3, method = "anova") +
+  stat_pvalue_manual(data = pairwise.carbon, label = "p.adj", size = 3,
+                     xmin = "group1", xmax = "group2", y.position = "y.position") + 
+  labs(x = "", y = expression('Error '~{delta}^13*C~'(\u2030)'), 
+       title = expression('(A)'~{delta}^13*C~'Error')) +
+  theme_Publication() +
+  theme(legend.position = "none")
+
+p.error.c.box
+
+p.error.n.box <- 
+  error_d15N %>% 
+  ggboxplot(x = "model", y = "mean", fill = "model",
+            outlier.shape = NA, 
+            palette =c("#440154FF", "#31688EFF", "#35B779FF", "#FDE725FF")) +
+  geom_jitter(aes(fill = model), color="black", shape = 21,  size=1.5, alpha=0.5, 
+              position=position_jitter(0.1)) +
+  scale_x_discrete(labels = c("Species", "Multi-spp", "European","Australian")) +
+  scale_y_continuous(limits = c(0,2.5)) +
+  stat_summary(fun.y=mean, geom="point", shape=8, size=4, color="red", fill="red") +
+  stat_compare_means(label.y = 2.5, size = 3, method = "anova") +
+  stat_pvalue_manual(data = pairwise.nitrogen, label = "p.adj", size = 3, 
+                     xmin = "group1", xmax = "group2", y.position = "y.position") + 
+  labs(x = "", y = expression('Error '~{delta}^15*N~'(\u2030)'), 
+       title = expression('(B)'~{delta}^15*N~'Error')) +
+  theme_Publication() +
+  theme(legend.position = "none")
+p.error.n.box
+
+p.error.box.panel <- 
+  ggarrange(p.error.c.box, p.error.n.box) %>% 
+  annotate_figure(bottom = text_grob("Conversion Model", vjust = -1)) 
+p.error.box.panel
+
+ggsave(filename = "figs/fig4.pdf",
+       plot = p.error.box.panel, device = cairo_pdf,
+       units = "in", width = 8, height = 4)
+
+
+```
+
+
+# 6. Mixed effects models
+ICC = intraclass correlation coeficient: proportion of total variance in y that is accounted for by group clustering. 
+
+Random effects tells how much variance we find amoung levels of the grouping variable, plus the residual. 
+
+The fixed effects is simlar to the lm. 
+
+The random effect, species, is meant to capture all the influences of species on muscle isotope valules. 
+```{r}
+library(lme4)
+library(lmerTest)
+library(MuMIn)
+library(sjPlot)
+library(parameters)
+
+```
+
+```{r d15N model}
+#===============================================================================
+#### Multi-level analysis - Varying intercept model
+#===============================================================================
+
+m1 <- lmer(d15N ~ d15N_fin + (1 | taxon_code), data = data_train)  # allows untercepts to vary by g
+
+summary(m1)
+coef(m1) 
+r.squaredGLMM(m1)  # get some R2 values, for fixed effects (R2m) and total (R2c)
+
+#### plot the point estimates of intercept values with 95% CIs
+sjPlot:::plot_model(m1, type = "re")
+
+tab_model(m1)
+
+#===============================================================================
+#### Multi-level analysis - Varying intercept AND slope model
+#===============================================================================
+
+m2 <- lmer(d15N ~ d15N_fin + (1 + d15N_fin | taxon_code), data = data_train)
+summary(m2)
+round(0.94718/(0.94718 + 0.15233) * 100, digits = 0)
+
+rand(m2)  # analysis of random effects - is variation associated with grouping significant? 
+coef(m2)  # provides the final summation of fixed and random effects 
+# That is, the addition of the random plus fixed effetcs
+fixef(m2)  # global intercept and slope
+ranef(m2)  # individual level alpha(j)'s; that is, the random effects
+# add these alpha j's to the global alpha, and you get the coeficients
+r.squaredGLMM(m2)  # get some R2 values, for fixed effects (R2m) and total (R2c)
+
+coef(m2)$g
+coef(m2)$g[1,]
+
+fixef(m2)[1]
+fixef(m2)[1] + ranef(m2)$taxon_code[1,1]  # calculation for intercept of that group
+fixef(m2)[2]  # slope
+
+ci(m2)
+confint(m2)
+standard_error(m2)
+standard_error(m2, effects = "random")
+model_parameters(m2, df_method = "satterthwaite")
+coef(m2)
+
+names <-enframe(rownames(coef(m2)$taxon_code))
+x <- as_tibble(coef(m2)$taxon_code)
+y <- as_tibble(standard_error(m2, effects = "random")$taxon_code)
+
+bind_cols(names, x, y) %>% 
+  rename(taxon_code = value, 
+         intercept = `(Intercept)...3`, 
+         slope = d15N_fin...4, 
+         int_SE = `(Intercept)...5`, 
+         slp_SE = d15N_fin...6) %>% 
+  select(-name, taxon_code, intercept, int_SE, slope, slp_SE) %>% 
+  left_join(data_fish_groups, by = "taxon_code") %>% 
+  select(family, common_name, intercept, int_SE, slope, slp_SE) %>% 
+  arrange(family, common_name) %>% 
+  select(-family) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  write_csv("tables/mixed_coefs_nitorgen.csv")
+
+#### plot the point estimates of intercept values with 95% CIs
+sjPlot:::plot_model(m2, type = "std")
+sjPlot:::plot_model(m2, type = "re")
+
+tab_model(m2)
+
+#### Compare the models #####
+anova(m1, m2)
+AIC(m1, m2, fit.global.C)
+
+```
+
+```{r d13C models}
+#===============================================================================
+#### Multi-level analysis - Varying intercept model
+#===============================================================================
+
+m3 <- lmer(d13C_lc ~ d13C_fin_lc + (1 | taxon_code), data = data_train)  # allows untercepts to vary by g
+
+summary(m3)
+round(0.1866/(0.1866 + 0.3005) * 100, digits = 0)
+
+coef(m3) 
+r.squaredGLMM(m3)  # get some R2 values, for fixed effects (R2m) and total (R2c)
+
+#### plot the point estimates of intercept values with 95% CIs
+sjPlot:::plot_model(m3, type = "re")
+
+tab_model(m3)
+
+#===============================================================================
+#### Multi-level analysis - Varying intercept AND slope model
+#===============================================================================
+
+m4 <- lmer(d13C_lc ~ d13C_fin_lc + (1 + d13C_fin_lc | taxon_code), data = data_train)
+summary(m4)
+round(27.56770/(27.56770 + 0.25881) * 100, digits = 0)
+
+confint(m4)
+r.squaredGLMM(m4)  # much better than only varying intercept model
+
+summary(m4)
+# Fixed - global param values, significant effect of x on y
+# Random effects - estimating vaiance ssociated with those g levels, and residual variance
+rand(m4)  # analysis of random effects - is variation associated with grouping significant? 
+coef(m4)  # provides the final summation of fixed and random effects 
+# That is, the addition of the random plus fixed effetcs
+fixef(m4)  # global intercept and slope
+ranef(m4)  # individual level alpha(j)'s; that is, the random effects
+# add these alpha j's to the global alpha, and you get the coeficients
+
+names <-enframe(rownames(coef(m4)$taxon_code))
+x <- as_tibble(coef(m4)$taxon_code)
+y <- as_tibble(standard_error(m4, effects = "random")$taxon_code)
+
+bind_cols(names, x, y) %>% 
+  rename(taxon_code = value, 
+         intercept = `(Intercept)...3`, 
+         slope = d13C_fin_lc...4, 
+         int_SE = `(Intercept)...5`, 
+         slp_SE = d13C_fin_lc...6) %>% 
+  select(-name, taxon_code, intercept, int_SE, slope, slp_SE) %>% 
+  left_join(data_fish_groups, by = "taxon_code") %>% 
+  select(family, common_name, intercept, int_SE, slope, slp_SE) %>% 
+  arrange(family, common_name) %>% 
+  select(-family) %>% 
+  mutate_if(is.numeric, round, 2) %>% 
+  write_csv("tables/mixed_coefs_carbon.csv")
+
+#### plot the point estimates of intercept values with 95% CIs
+sjPlot:::plot_model(m4, type = "re")
+sjPlot:::plot_model(m4, type = "pred")
+
+tab_model(m3, m4)
+
+#### Compare the models #####
+anova(m3, m4)
+AIC(m3, m4)
+```
+
+```{r}
+tab_model(m4, m2)
+```
+
+```{r}
+### plot
+(mm_plot <- ggplot(data_train, aes(x = d13C_fin_lc, y = d13C_lc)) +
+      lemon::facet_rep_wrap(~taxon_code) +   # a panel for each mountain range
+      geom_point(alpha = 0.5) +
+      theme_classic() +
+      geom_line(data = cbind(data_train, pred = predict(m4)), aes(y = pred), size = 1) + 
+      theme(legend.position = "none")
+)
+```
+
+```{r}
+library(ggeffects) 
+
+# Extract the prediction data frame
+pred.mm <- ggpredict(m4, terms = c("d13C_fin_lc"))  
+
+# Plot the predictions 
+
+(ggplot(pred.mm) + 
+   geom_line(aes(x = x, y = predicted)) +          # slope
+   geom_ribbon(aes(x = x, ymin = predicted - std.error, ymax = predicted + std.error), 
+               fill = "lightgrey", alpha = 0.5) +  # error band
+   geom_point(data = data_train,                      # adding the raw data (scaled values)
+              aes(x = d13C_fin_lc, y = d13C_lc, colour = taxon_code)) + 
+   labs(x = "fin", y = "muscle", 
+        title = "Fins predict muscle values") + 
+   theme_minimal()
+)
+```
+
+```{r}
+ggpredict(m2, terms = c("d15N_fin", "taxon_code"), type = "re") %>% 
+   plot() +
+   labs(x = "fin", y = "muscle", title = "Effect of species on muscle values") + 
+   theme_minimal() + 
+   scale_color_discrete()
+```
+
+# 7. Testing LMM models 
+
+### Predictions
+```{r Predict dataframe}
+m2 <- lmer(d15N ~ d15N_fin + (1 + d15N_fin | taxon_code), data = data_train)
+summary(m2)
+
+# plot the marginal effects, not conditioned on random-effect variances.
+pr <- ggpredict(m2, terms = "d15N_fin")
+pr
+plot(pr)
+
+# Now account for random variance on popualtion estimate
+pr <- ggpredict(m2, terms = "d15N_fin", type = "random")
+pr
+plot(pr)
+
+# To get predicted values for a specific level of the random effect term, simply define this level in the condition-argument.
+pr <- ggpredict(m2, terms = "d15N_fin", type = "random", condition = c(taxon_code = "CKC"))
+pr
+plot(pr)
+
+# To compute marginal effects for each grouping level, add the related random term to the terms-argument. In this case, confidence intervals are not calculated, but marginal effects are conditioned on each group level of the random effects.
+pr <- ggpredict(m2, terms = c("d15N_fin","taxon_code"), type = "random")
+pr <- pr %>% filter(group %in% c("LNS","WHS","LND","CKC"))
+plot(pr, add.data = TRUE)
+
+pr <- ggpredict(m2, terms = c("d15N_fin","taxon_code [LNS, WHS, LND, CKC]"), type = "random")
+plot(pr)
+
+pr <- ggpredict(m2, terms = c("d15N_fin","taxon_code [sample=4]"), type = "random")
+plot(pr)
+
+pr <- ggpredict(m2, terms = c("d15N_fin","taxon_code [WHS]"), type = "random")
+```
